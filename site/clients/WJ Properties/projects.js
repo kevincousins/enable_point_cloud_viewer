@@ -41,5 +41,11 @@ window.PROJECTS = {
     // Own R2 prefix (wj/7stdennispartialslab) so its 14 panoramas stay isolated from the
     // other 7-St-Dennis projects' shared stations manifest.
     folder: "https://pub-3f436f87578a4223ae3a342484363f71.r2.dev/wj/7stdennispartialslab/pointclouds/scan"
-  }
+  },
+  // viewer-publish begin emw-2026-024 (published from Tekla; the publish tool rewrites this block)
+  "emw-2026-024": {
+    "name": "7 St Dennis Temp Generator Area",
+    "folder": "https://pub-3f436f87578a4223ae3a342484363f71.r2.dev/wj/emw-2026-024/pointclouds/scan"
+  },
+  // viewer-publish end emw-2026-024
 };
