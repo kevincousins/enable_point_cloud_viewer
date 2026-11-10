@@ -14238,7 +14238,9 @@
     function fitInitialClipBoxToModels() {
       var cfg = meta && meta.clipToModel;
       if (cfg === undefined || cfg === null || cfg === false) return;
+      // A pinned opening crop (meta.initialView.clip) wins over clipToModel.
       if (_clipToModelApplied || !initialClipBox) return;
+      if (meta && meta.initialView && meta.initialView.clip) return;
       var mx = 0, my = 0, mz = 0;
       if (typeof cfg === 'number' && isFinite(cfg)) {
         mx = my = mz = cfg;
@@ -16167,8 +16169,15 @@
       registerPrimaryScan(pc);
       loadAdditionalScans();
 
-      // Fit camera to content on first load
-      viewer.fitToScreen();
+      // Fit camera to content on first load — SKIPPED when the project pins its
+      // own opening camera (meta.initialView.cam), which is applied at the end of
+      // this chain. Potree's zoomTo() always drives the camera through a TWEEN, and
+      // even a zero-duration tween only writes view.position/lookAt on the NEXT
+      // animation frame — i.e. after our synchronous apply — so fitting here would
+      // silently stomp the pinned view one frame later. controls.stopTweens() can't
+      // save us either: it only stops tweens the CONTROLS registered, not the ones
+      // viewer.zoomTo() creates itself. Not creating the tween is the real fix.
+      if (!(meta && meta.initialView && meta.initialView.cam)) viewer.fitToScreen();
 
       // ===== Auto-scale marker size based on bounding box =====
       try {
@@ -16329,6 +16338,104 @@
         }
       } catch (err) {
         console.warn('Clip box init failed:', err);
+      }
+
+      // ===== INITIAL VIEW (per project: projects.js meta.initialView) =====
+      // Pin the camera AND the crop box the viewer opens on, so a shared link
+      // always lands on the same framing instead of the whole-scan fit above.
+      // Set it with the local "Set as opening view" bar below (served by
+      // tools/opening_view.py, or the Tekla "Publish to viewer" preview). The
+      // shape is deliberately identical to a Saved View's own snapshot:
+      //   initialView: {
+      //     cam:  { position: {x,y,z}, yaw, pitch, radius, mode },
+      //     clip: { initial: { position: {x,y,z}, rotation: {x,y,z}, scale: {x,y,z} } }
+      //   }
+      // Both halves are optional. Runs LAST in the load chain (after
+      // fitToScreen and after the crop box exists) so nothing overwrites it;
+      // reuses the Saved Views appliers, so it restores exactly what a view
+      // recall would. Without the key the existing startup behaviour is kept.
+      try {
+        var _iv = meta && meta.initialView;
+        if (_iv) {
+          if (_iv.clip) _applyClip(_iv.clip);
+          if (_iv.cam) _applyCamera(_iv.cam);
+          console.log('[initialView] applied from projects.js');
+        }
+      } catch (err) {
+        console.warn('initialView failed:', err);
+      }
+
+      // ===== LOCAL CHECK BAR: "Set as opening view" (never on the live site) =====
+      // Shown only when the page is served from this PC (localhost / 127.0.0.1),
+      // i.e. by tools/opening_view.py or the Tekla "Publish to viewer" preview.
+      // It POSTs the current camera + crop box to that local server, which saves
+      // them as this project's meta.initialView. A server that can't save (plain
+      // `python -m http.server`) gets the projects.js snippet to paste instead.
+      try {
+        (function installOpeningViewBar() {
+          var host = location.hostname;
+          if (!(host === 'localhost' || host === '127.0.0.1' || host === '[::1]')) return;
+          if (document.getElementById('enable-opening-view-bar')) return;
+          var pid = new URLSearchParams(location.search).get('p') || '';
+          function r6(n) { return Math.round(n * 1e6) / 1e6; }
+          function o3(v) { return { x: r6(v.x), y: r6(v.y), z: r6(v.z) }; }
+          function snapshot() {
+            var c = _captureCamera();
+            var view = { cam: { position: o3(c.position), yaw: r6(c.yaw), pitch: r6(c.pitch),
+                                radius: r6(c.radius), mode: c.mode } };
+            if (typeof initialClipBox !== 'undefined' && initialClipBox) {
+              view.clip = { initial: { position: o3(initialClipBox.position),
+                                       rotation: o3(initialClipBox.rotation),
+                                       scale: o3(initialClipBox.scale) } };
+            }
+            return view;
+          }
+          var bar = document.createElement('div');
+          bar.id = 'enable-opening-view-bar';
+          bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);' +
+            'z-index:100000;display:flex;gap:8px;align-items:center;padding:8px 10px;' +
+            'background:rgba(24,24,24,.94);border:1px solid #3EAD4A;border-radius:6px;' +
+            'font:13px/1.3 sans-serif;color:#ddd;box-shadow:0 2px 12px rgba(0,0,0,.5);max-width:calc(100vw - 32px)';
+          function el(tag, text, css) { var e = document.createElement(tag); e.textContent = text; e.style.cssText = css || ''; return e; }
+          function btn(text, primary) {
+            var b = el('button', text, 'cursor:pointer;border-radius:4px;padding:5px 10px;font:inherit;white-space:nowrap;' +
+              (primary ? 'background:#3EAD4A;border:1px solid #3EAD4A;color:#fff;font-weight:600'
+                       : 'background:transparent;border:1px solid #666;color:#ddd'));
+            b.type = 'button';
+            return b;
+          }
+          var tag = el('span', 'Local check', 'color:#3EAD4A;font-weight:600;white-space:nowrap');
+          var setBtn = btn('Set as opening view', true);
+          var clrBtn = btn('Clear', false);
+          clrBtn.title = 'Remove the opening view: the link opens on the whole scan again';
+          var msg = el('span', 'Frame the view and crop box a shared link should open on.', 'color:#bbb');
+          var hide = btn('\u00d7', false);
+          hide.title = 'Hide this bar (reload to bring it back)';
+          hide.style.padding = '2px 8px';
+          [tag, setBtn, clrBtn, msg, hide].forEach(function(e) { bar.appendChild(e); });
+          document.body.appendChild(bar);
+          hide.onclick = function() { bar.remove(); };
+          function send(view) {
+            msg.textContent = 'Saving\u2026';
+            fetch('/__enable/opening-view', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ page: location.pathname, p: pid, view: view })
+            }).then(function(r) {
+              return r.json().catch(function() { return null; }).then(function(j) { return { r: r, j: j }; });
+            }).then(function(res) {
+              if (res.j && res.j.ok) { msg.textContent = res.j.message || 'Saved.'; return; }
+              if (res.j && res.j.error) { msg.textContent = 'Not saved: ' + res.j.error; return; }
+              // No save endpoint on this server: hand over the snippet instead.
+              msg.textContent = 'This server cannot save (HTTP ' + res.r.status + ').';
+              if (view) window.prompt('Paste into projects.js, inside the "' + pid + '" entry:',
+                                      'initialView: ' + JSON.stringify(view) + ',');
+            }).catch(function(err) { msg.textContent = 'Not saved: ' + err.message; });
+          }
+          setBtn.onclick = function() { send(snapshot()); };
+          clrBtn.onclick = function() { send(null); };
+        })();
+      } catch (err) {
+        console.warn('opening-view bar failed:', err);
       }
     }).catch((err) => {
       console.error(err);
