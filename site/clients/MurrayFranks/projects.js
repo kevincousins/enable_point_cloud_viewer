@@ -11,5 +11,11 @@ window.PROJECTS = {
     folder: "https://pub-3f436f87578a4223ae3a342484363f71.r2.dev/murrayfranks/1531dupont/pointclouds/fullfinal",
     // Load the Tekla canopy model on startup instead of as an on-demand row.
     autoLoadModels: true
-  }
+  },
+  // viewer-publish begin emw-2026-007 (published from Tekla; the publish tool rewrites this block)
+  "emw-2026-007": {
+    "name": "1531 DUPONT - EXT CANOPY",
+    "folder": "https://pub-3f436f87578a4223ae3a342484363f71.r2.dev/murrayfranks/emw-2026-007/pointclouds/scan"
+  },
+  // viewer-publish end emw-2026-007
 };
