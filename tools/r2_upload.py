@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Upload a local folder to the Cloudflare R2 bucket, then VERIFY it.
 
-    python tools/r2_upload.py <local_dir> <r2_key_prefix>
+    python tools/r2_upload.py <local_dir> <r2_key_prefix> [--always <file name>]...
 
 e.g. python tools/r2_upload.py \
         "site/clients/Conterra/Partial Slab Replacement/pointclouds/scan" \
@@ -15,6 +15,11 @@ os.walk diff on BOTH the key set and the sizes, and prints OK / FAILED.
 
 It is also resume-safe: keys whose remote size already matches are skipped, so
 re-running it repairs a partial upload instead of redoing 300MB.
+
+--always <file name> (repeatable) sends every file with that name even when R2
+already has one of the same size, and marks it "Cache-Control: no-cache" so
+browsers check for a newer copy. For small lists that change in place, such as
+models/models.json after a model update.
 """
 import json, os, sys, threading, queue
 import boto3
@@ -46,7 +51,7 @@ def listing(s3, bucket, prefix):
         tok = r["NextContinuationToken"]
 
 
-def main(src, prefix, threads=24):
+def main(src, prefix, threads=24, always=()):
     prefix = prefix.strip("/")
     src = os.path.abspath(src)
     creds = json.load(open(os.path.join(REPO, ".r2creds.json")))
@@ -69,7 +74,8 @@ def main(src, prefix, threads=24):
     remote = listing(s3, bucket, prefix)
     print("already on R2: %d" % len(remote), flush=True)
 
-    todo = [k for k, (fp, sz) in local.items() if remote.get(k) != sz]
+    always = set(always)
+    todo = [k for k, (fp, sz) in local.items() if remote.get(k) != sz or k.rsplit("/", 1)[-1] in always]
     print("to upload: %d" % len(todo), flush=True)
 
     q = queue.Queue()
@@ -85,7 +91,10 @@ def main(src, prefix, threads=24):
                 return
             fp, _ = local[k]
             try:
-                s3.upload_file(fp, bucket, k, ExtraArgs={"ContentType": content_type(k)})
+                extra = {"ContentType": content_type(k)}
+                if k.rsplit("/", 1)[-1] in always:
+                    extra["CacheControl"] = "no-cache"
+                s3.upload_file(fp, bucket, k, ExtraArgs=extra)
                 with lock:
                     done[0] += 1
                     if done[0] % 250 == 0 or done[0] == len(todo):
@@ -120,7 +129,14 @@ def main(src, prefix, threads=24):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    args, always, a = [], [], sys.argv[1:]
+    while a:
+        if a[0] == "--always" and len(a) > 1:
+            always.append(a[1])
+            a = a[2:]
+        else:
+            args.append(a.pop(0))
+    if len(args) != 2:
         print(__doc__)
         sys.exit(2)
-    sys.exit(main(sys.argv[1], sys.argv[2]))
+    sys.exit(main(args[0], args[1], always=always))
