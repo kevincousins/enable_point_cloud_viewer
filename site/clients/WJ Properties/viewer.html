@@ -14001,8 +14001,9 @@
       loadModelRec(rec);
     }
 
-    // Discover the project's models/ folder (lists, does NOT load — the user loads
-    // on demand). Folder: <root>/pointclouds/<x> -> <root>/models
+    // Discover the project's models/ folder, list them in the Models panel, and load
+    // them on startup unless the project opts out (meta.autoLoadModels === false).
+    // Folder: <root>/pointclouds/<x> -> <root>/models
     function discoverProjectModels() {
       var root = meta.folder.replace(/\/+$/, '').replace(/\/pointclouds\/[^/]*$/, '');
       var modelsURL = root + '/models';
@@ -14018,14 +14019,24 @@
         })
         .then(function(list) {
           if (!list || !list.length) { console.log('[models] none in', modelsURL); return; }
+          var added = [];
           list.forEach(function(item) {
             var file = typeof item === 'string' ? item : item.file;
             if (!file) return;
             var name = (typeof item === 'object' && item.name) ? item.name : file.replace(/\.glb$/i, '');
-            addModelEntry(name, modelsURL + '/' + encodeURIComponent(file), false);
+            added.push(addModelEntry(name, modelsURL + '/' + encodeURIComponent(file), false));
           });
           console.log('[models] discovered', list.length, 'in', modelsURL);
           updateModelsPanel();
+          // ON BY DEFAULT for every project (Kevin, 2026-11-10): load the folder's
+          // models on startup, so a shared link opens with the model already in view.
+          // A project opts out with `autoLoadModels: false` in projects.js (it then
+          // keeps the on-demand "Load" row). Only folder entries — an ad-hoc file
+          // the user picked is already loaded.
+          if (!(meta && meta.autoLoadModels === false)) {
+            console.log('[models] auto-loading', added.length, 'on startup');
+            added.forEach(function(rec) { loadModelRec(rec); });
+          }
         });
     }
 
